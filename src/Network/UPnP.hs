@@ -1,7 +1,7 @@
-{-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE ParallelListComp #-}
+{-# LANGUAGE ParallelListComp    #-}
+{-# LANGUAGE PatternGuards       #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE ViewPatterns        #-}
 
 module Network.UPnP
   ( -- * Device description
@@ -32,45 +32,45 @@ module Network.UPnP
   , getStringValue, getRequiredStringValue
   ) where
 
-import Control.Applicative
-import Control.Monad.Trans
-import Control.Monad.Error
-import Data.Maybe
-import Data.Monoid
-import Data.List
-import Text.XML.Light
-import Network.URI
-import Network.HTTP
+import           Control.Applicative        ((<$>))
+import           Control.Monad.Except
+import           Control.Monad.Trans.Except ()
+import           Data.List
+import           Data.Maybe
+import           Data.Monoid
+import           Network.HTTP
+import           Network.URI
+import           Text.XML.Light
+import  Data.ByteString(ByteString)
+import Data.Text.Encoding(decodeUtf8)
+import           Network.SSDP
+import           Network.UPnP.Parser
+import           Network.UPnP.Render
+import           Network.UPnP.Types
 
-import Network.SSDP
-import Network.UPnP.Types
-import Network.UPnP.Parser
-import Network.UPnP.Render
+require :: Monad m => Maybe a -> ExceptT String m a
+require = maybe (fail "Unexpected Nothing") return
 
-require :: Monad m => Maybe a -> ErrorT String m a
-require = maybe (fail "Unexpected Nothing") return 
-
-requireRight :: Monad m => Either err a -> ErrorT String m a
+requireRight :: Monad m => Either err a -> ExceptT String m a
 requireRight = either (\_ -> fail "Unexpected Left") return
 
 --------------------------------------------------------------------------------
 -- Device description
 
 requestDeviceDescription :: SSDP Notify -> IO (Either String (Upnp Device))
-requestDeviceDescription ssdp = runErrorT $ do
+requestDeviceDescription ssdp = runExceptT $ do
   loc <- require $ getHeaderValue "LOCATION" ssdp
   uri <- case parseURI loc of
            Just uri -> return uri { uriPath = "/" }
            Nothing  -> fail "Invalid location."
-  res <- liftIO $ simpleHTTP (getRequest loc)
+  res <- liftIO $ simpleHTTP (mkRequest GET $ fromJust (parseURI loc)::Request ByteString)
   bdy <- rspBody <$> requireRight res
-  let xml  = parseXML bdy
+  let xml  = parseXML $ decodeUtf8 bdy
       els  = onlyElems xml
-      devs = pickChildren (hasElName "device") $ els
+      devs = pickChildren (hasElName "device") els
   case devs of
     [dev] -> return $ UpnpXml Nothing uri Nothing Nothing [dev]
     _     -> fail "Unexpected number of <device> tags."
- where
 
 --------------------------------------------------------------------------------
 -- Helper
@@ -80,10 +80,10 @@ hasElName n (elName -> (qName -> n')) = n == n'
 
 hasValue :: String -> Element -> Bool
 hasValue v (elContent -> [Text (cdData -> v')]) = v == v'
-hasValue _ _ = False
+hasValue _ _                                    = False
 
 hasEl :: (Element -> Bool) -> Element -> Bool
-hasEl test el = or . map test $ elChildren el
+hasEl test el = any test $ elChildren el
 
 infixr 9 ~>
 (~>) :: (a -> b) -> (b -> c) -> a -> c
@@ -106,18 +106,18 @@ getStringValue :: String -> UpnpXml a -> Maybe String
 getStringValue s (UpnpXml _ _ _ _ dev) =
   case pickChildren (hasElName s) dev of
     [elContent -> [Text (cdData -> str)]] -> Just str
-    _ -> Nothing
+    _                                     -> Nothing
 
 -- | Find a required string valued device property. Uses `fail` on error.
 getRequiredStringValue :: String -> UpnpXml a -> String
 getRequiredStringValue s =
-    maybe (fail $ "Tag <" ++ s ++ "> or its value not found.") id
+    fromMaybe (fail $ "Tag <" ++ s ++ "> or its value not found.")
   . getStringValue s
 
 -- | Filter elements which contain a certain @<name>@ tag value
 filterByNameValue :: String -> [Element] -> [Element]
 filterByNameValue val = filter $
-  or . map (\el -> hasElName "name" el && hasValue val el)
+  any (\el -> hasElName "name" el && hasValue val el)
      . onlyElems
      . elContent
 
@@ -126,7 +126,7 @@ filterByNameValue val = filter $
 
 getDeviceType :: Upnp Device -> Maybe DeviceType
 getDeviceType d =
-  case fmap parseDeviceType $ getStringValue "deviceType" d of
+  case parseDeviceType <$> getStringValue "deviceType" d of
     Just (Right dt) -> Just dt
     _               -> Nothing
 
@@ -160,13 +160,13 @@ getServiceList upnp@(UpnpXml _ uri _ _ dev) =
 
 getServiceType :: Upnp Service -> Maybe ServiceType
 getServiceType d =
-  case fmap parseServiceType $ getStringValue "serviceType" d of
+  case parseServiceType <$> getStringValue "serviceType" d of
     Just (Right st) -> Just st
     _               -> Nothing
 
 getServiceId :: Upnp Service -> Maybe ServiceId
 getServiceId d =
-  case fmap parseServiceId $ getStringValue "serviceId" d of
+  case parseServiceId <$> getStringValue "serviceId" d of
     Just (Right sid) -> Just sid
     _                -> Nothing
 
@@ -195,11 +195,11 @@ findService sty dev =
 
 requestActions
   :: Upnp Service -> IO (Either String (Upnp Actions))
-requestActions service@(UpnpXml _ uri _ _ _) = runErrorT $ do
+requestActions service@(UpnpXml _ uri _ _ _) = runExceptT $ do
   let scpduri = getSCPDURL service `relativeTo` uri
-  res <- liftIO $ simpleHTTP $ getRequest $ show scpduri
+  res <- liftIO $ simpleHTTP (mkRequest GET $ fromJust (parseURI $ show scpduri)::Request ByteString)
   bdy <- rspBody <$> requireRight res
-  let xml     = parseXML bdy
+  let xml     = parseXML $ decodeUtf8 bdy
       els     = onlyElems xml
   return $ UpnpXml (Just service) scpduri Nothing Nothing els
 
@@ -221,7 +221,7 @@ getActionNames (UpnpXml _ _ _ _ xml) =
 pickActionByName :: String -> [Element] -> [Element]
 pickActionByName name =
      pickActions
-  ~> filter (or . map (\el -> hasElName "name" el && hasValue name el)
+  ~> filter (any (\el -> hasElName "name" el && hasValue name el)
                 . onlyElems . elContent)
 
 getActionByName :: String -> Upnp Actions -> Maybe (Upnp Action)
@@ -257,31 +257,31 @@ getStateVariableByName name (UpnpXml _ _ _ _ xml) =
 
         -- data type
         daty = case pickTag "dataType" ~> pickStringValues ~> concat $ [svar] of
-                 "ui1"        -> Upnp_ui1
-                 "ui2"        -> Upnp_ui2
-                 "ui4"        -> Upnp_ui4
-                 "i1"         -> Upnp_i1
-                 "i2"         -> Upnp_i2
-                 "i4"         -> Upnp_i4
-                 "int"        -> Upnp_int
-                 "r4"         -> Upnp_r4
-                 "r8"         -> Upnp_r8
-                 "number"     -> Upnp_number
-                 "fixed_14_4" -> Upnp_fixed_14_4
-                 "float"      -> Upnp_float
-                 "char"       -> Upnp_char
-                 "string"     -> Upnp_string
-                 "date"       -> Upnp_date
-                 "dateTime"   -> Upnp_dateTime
+                 "ui1"         -> Upnp_ui1
+                 "ui2"         -> Upnp_ui2
+                 "ui4"         -> Upnp_ui4
+                 "i1"          -> Upnp_i1
+                 "i2"          -> Upnp_i2
+                 "i4"          -> Upnp_i4
+                 "int"         -> Upnp_int
+                 "r4"          -> Upnp_r4
+                 "r8"          -> Upnp_r8
+                 "number"      -> Upnp_number
+                 "fixed_14_4"  -> Upnp_fixed_14_4
+                 "float"       -> Upnp_float
+                 "char"        -> Upnp_char
+                 "string"      -> Upnp_string
+                 "date"        -> Upnp_date
+                 "dateTime"    -> Upnp_dateTime
                  "dateTime_tz"-> Upnp_dateTime_tz
-                 "time"       -> Upnp_time
-                 "time_tz"    -> Upnp_time_tz
-                 "boolean"    -> Upnp_boolean
-                 "bin_base64" -> Upnp_bin_base64
-                 "bin_hex"    -> Upnp_bin_hex
-                 "uri"        -> Upnp_uri
-                 "uuid"       -> Upnp_uuid
-                 _            -> Upnp_string
+                 "time"        -> Upnp_time
+                 "time_tz"     -> Upnp_time_tz
+                 "boolean"     -> Upnp_boolean
+                 "bin_base64"  -> Upnp_bin_base64
+                 "bin_hex"     -> Upnp_bin_hex
+                 "uri"         -> Upnp_uri
+                 "uuid"        -> Upnp_uuid
+                 _             -> Upnp_string
 
         -- "sendEvents" (default "yes") attribute value:
         sendEvents = not $ or [ qName k == "sendEvents" && v == "no"
@@ -314,7 +314,7 @@ getStateVariableByName name (UpnpXml _ _ _ _ xml) =
              $ [svar]
           | otherwise = Nothing
          where
-          buildRange els = ValueRange 
+          buildRange els = ValueRange
                              { rangeMin  = pickTag "minimum"
                                         ~> pickStringValues ~> concat
                                          $ els
@@ -436,7 +436,7 @@ prepareStatement action args
       (Upnp_bin_hex   , UpnpVal_bin_hex     _) -> True
       (Upnp_uri       , UpnpVal_uri         _) -> True
       (Upnp_uuid      , UpnpVal_uuid        _) -> True
-      _ -> False
+      _                                        -> False
 
   valueAllowed (Just vals) val = render val `elem` vals
   valueAllowed Nothing     _   = True

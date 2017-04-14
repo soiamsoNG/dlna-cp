@@ -21,7 +21,7 @@ module Network.SSDP
   , ParseError
   ) where
 
-import           Control.Applicative
+import           Control.Applicative()
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import qualified Control.Exception    as E
@@ -31,10 +31,15 @@ import           Control.Monad.Trans
 import           Data.Char
 import           Data.Maybe
 import           Data.List
+import qualified Data.Text    as T
+import           Data.Text.Encoding(decodeUtf8)
+import           Data.ByteString.Builder(toLazyByteString, stringUtf8)
+import           Data.ByteString.Lazy(toStrict)
 import           Text.ParserCombinators.Parsec (ParseError)
 
 import           Network
 import qualified Network.Socket       as S
+import qualified Network.Socket.ByteString as SB
 import           Network.Multicast
 import           Network.SSDP.Parser
 import           Network.SSDP.Headers ()
@@ -56,8 +61,8 @@ sendNotify ssdp = liftIO $ do
 
   -- send ssdp:discover
   (sock, sockaddr) <- multicastSender ssdpAddr ssdpPort
-  _ <- S.sendTo sock (render ssdp) sockaddr
-  S.sClose sock
+  _ <- SB.sendTo sock (toStrict $ toLazyByteString $ stringUtf8 $ render ssdp) sockaddr
+  S.close sock
 
 sendSearch
   :: MonadIO m
@@ -71,7 +76,7 @@ sendSearch ssdp = liftIO $ do
   errors  <- newTChanIO
 
   (sock, sockaddr) <- multicastSender ssdpAddr ssdpPort
-  _ <- S.sendTo sock (render ssdp) sockaddr
+  _ <- SB.sendTo sock (toStrict $ toLazyByteString $ stringUtf8 $ render ssdp) sockaddr
 
   let mx = get MXH ssdp
 
@@ -82,24 +87,24 @@ sendSearch ssdp = liftIO $ do
   let loop = forever $ do
 
         -- receive & parse (TODO) incoming NOTIFY message
-        (msg, _, from) <- S.recvFrom sock 4096
-        putStrLn $ "Message from " ++ show from
+        (msg, from) <- SB.recvFrom sock 4096
+        -- putStrLn $ "Message from " ++ show from
 
         atomically $
-          case parseSsdpSearchResponse msg of
+          case parseSsdpSearchResponse (T.unpack $ decodeUtf8 msg) of
             -- store result
             Right notify -> writeTChan results (from, notify)
             Left  err    -> writeTChan errors  (from, err)
 
   -- set timeout & start looping
-  killAfter (mx * 1000 * 1000) loop `E.finally` S.sClose sock
+  killAfter (mx * 1000 * 1000) loop `E.finally` S.close sock
 
   -- wait for all threads to finish before returning all results
   atomically $ (,) <$> chanToList results
                    <*> chanToList errors
  where
   killAfter n io = do
-    tid <- forkIO $ io
+    tid <- forkIO io
     threadDelay n
     killThread tid
 
@@ -117,7 +122,6 @@ sendSearch ssdp = liftIO $ do
 getHeaderValue :: String -> SSDP a -> Maybe String
 getHeaderValue (map toUpper -> hdr) (SSDP _ hdrs) =
   join $ hdrVal <$> find ((hdr ==) . hdrName) hdrs
- where
 
 hdrName :: Header -> String
 hdrName (h :- _) = map toUpper h
@@ -130,8 +134,7 @@ hdrVal (_ :? v) = v
 hasHeader :: String -> SSDP a -> Bool
 hasHeader (map toUpper -> hdr) (SSDP _ hdrs) = go hdrs
  where
-  go [] = False
-  go (x:xs) = if hdr == hdrName x then True else go xs
+  go = foldr (\ x -> (||) (hdr == hdrName x)) False
 
 --------------------------------------------------------------------------------
 -- SSDP Messages
