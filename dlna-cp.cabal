@@ -1,0 +1,35 @@
+Name:                dlna-cp
+Version:             0.0.1
+
+-- Synopsis:            SSDP/UPnP library
+Description:         DLNA ControlPoint with Media Server
+
+License:             MIT
+License-file:        LICENSE
+Author:              soiamsoNG <83182235@qq.com>
+Maintainer:          83182235@qq.com
+-- Copyright:
+
+Category:            Network
+
+Build-type:          Simple
+Cabal-version:       >= 1.6
+
+Executable controlpoint
+
+  HS-source-dirs:    src
+  Main-Is:           ControlPoint.hs
+
+  GHC-options:       -Wall -O2 -threaded -dynamic
+  Build-depends:
+    base == 4.*, network, network-multicast, mtl, stm, transformers,
+    bytestring, text,
+    parsec, xml, HTTP, ssdp-upnp,
+    network-uri, xml-conduit-writer, data-default, xml-conduit,
+    warp, wai, http-types, process, unix, filepath, directory,
+    wai-app-static, async, network-info, uuid, split, time, hxt
+
+  Other-modules: AVTransport,
+        FileServer,
+        EventServer,
+        Subscribe

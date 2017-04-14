@@ -1,0 +1,33 @@
+Name:                ssdp-upnp
+Version:             0.0.1
+
+Synopsis:            SSDP/UPnP library
+Description:         SSDP/UPnP library
+
+License:             MIT
+License-file:        LICENSE
+Author:              Nils Schweinsberg <mail@nils.cc>
+Maintainer:          mail@nils.cc
+Copyright:
+
+Category:            Network
+
+Build-type:          Simple
+Cabal-version:       >= 1.6
+
+Library
+  Build-depends:
+    base == 4.*, network, network-multicast, mtl, stm, transformers,
+    bytestring, text,
+    parsec, xml, HTTP,
+    network-uri
+  Exposed-Modules: Network.SSDP,
+        Network.SSDP.Headers,
+        Network.SSDP.Parser,
+        Network.SSDP.Render,
+        Network.SSDP.Types,
+        Network.SSDP.UUID,
+        Network.UPnP,
+        Network.UPnP.Parser,
+        Network.UPnP.Render,
+        Network.UPnP.Types
