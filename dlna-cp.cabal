@@ -20,7 +20,7 @@ Executable controlpoint
   HS-source-dirs:    src
   Main-Is:           ControlPoint.hs
 
-  GHC-options:       -Wall -O2 -threaded -dynamic
+  GHC-options:       -Wall -O2 -threaded
   Build-depends:
     base == 4.*, network, network-multicast, mtl, stm, transformers,
     bytestring, text,

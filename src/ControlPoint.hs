@@ -5,7 +5,7 @@ import           AVTransport
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Exception        (handle)
-import           Control.Monad            (when)
+import           Control.Monad            (when, unless)
 import           Data.Maybe
 import           EventServer
 import           FileServer
@@ -15,9 +15,9 @@ import           Network.SSDP
 import           Network.UPnP
 import           Network.URI
 import           Subscribe
+import           System.Console.GetOpt
 import           System.Directory
-import System.Console.GetOpt
-import System.Environment(getArgs)
+import           System.Environment       (getArgs)
 
 
 parseHostURI::String -> URI
@@ -33,7 +33,7 @@ getEventServerURI a = a{uriAuthority = Just new}
     ua = fromJust $ uriAuthority a
 
 data Options = Options {
-  optHost     :: Maybe URI
+  optHost      :: Maybe URI
   , optFileDir :: Maybe FilePath
 } deriving Show
 
@@ -101,6 +101,9 @@ main = do
   let mediaPath = fromMaybe (error "Need set file dirtry to Media by -d") (optFileDir opts)
   let eventServerURI = getEventServerURI hostURI
 
+  dpe <- doesPathExist mediaPath
+  unless dpe $ error "Media path not exist"
+
   playstate <- newEmptyMVar
   trackstate <- newEmptyMVar
   tracklist <- newChan
@@ -111,7 +114,11 @@ main = do
   (dev, sev) <- wait a_dev
   ut <- subscribeEvent (dev, sev) eventServerURI
 
-  fps <- listDirectory mediaPath
+  dfe <- doesFileExist mediaPath
+  fps <- if dfe
+            then return [""]
+            else listDirectory mediaPath
+
   writeList2Chan tracklist $ map (toPlaypath hostURI) fps
 
   when (length fps == 1) $ do
