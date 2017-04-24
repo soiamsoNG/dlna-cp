@@ -94,7 +94,13 @@ instance Exception ThreadTimeoutException
 
 
 reltimeTicking::MVar String -> Chan URI -> AVService -> IO()
-reltimeTicking trackstate tracklist as = do
+reltimeTicking trackstate tracklist as = handle
+  (\(e::IOException) -> if show e == "connect: does not exist (Connection refused)"
+      then do
+        putStrLn "Connection refused, Retry"
+        threadDelay 1000000
+        reltimeTicking trackstate tracklist as
+      else throw e) $ do
       Right rsp <- actionGetPositionInfo as
       -- print $ rspBody rsp
       [turi] <- runX $ readString [] (rspBody rsp) //> hasName "TrackURI" //> getText

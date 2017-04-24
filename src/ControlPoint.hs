@@ -5,7 +5,8 @@ import           AVTransport
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Exception        (handle)
-import           Control.Monad            (when, unless)
+import           Control.Monad            (unless, when)
+import           Data.List                (sort)
 import           Data.Maybe
 import           EventServer
 import           FileServer
@@ -117,7 +118,7 @@ main = do
   dfe <- doesFileExist mediaPath
   fps <- if dfe
             then return [""]
-            else listDirectory mediaPath
+            else sort <$> listDirectory mediaPath
 
   writeList2Chan tracklist $ map (toPlaypath hostURI) fps
 
