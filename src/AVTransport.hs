@@ -4,6 +4,7 @@
 module AVTransport
     (
       actionPlay,
+      actionStop,
       actionSetAVTransportURI,
       actionSetNextAVTransportURI,
       actionGetPositionInfo,
@@ -15,9 +16,10 @@ module AVTransport
     ) where
 
 import           Control.Arrow.ArrowTree  ((//>))
-import           Control.Concurrent       (threadDelay, Chan, readChan)
+import           Control.Concurrent       (Chan, readChan, threadDelay)
 import           Control.Concurrent.Async
-import           Control.Concurrent.MVar  (MVar, readMVar, takeMVar, isEmptyMVar, putMVar)
+import           Control.Concurrent.MVar  (MVar, isEmptyMVar, putMVar, readMVar,
+                                           takeMVar)
 import           Control.Exception
 import           Data.Default
 import qualified Data.Text                as T
@@ -46,16 +48,32 @@ actionPlay a = simpleHTTP $ Request (getFullAVURI a) POST soapactionhead body
             element "InstanceID" (0::Int)
             element "Speed" (1::Int)
 
+actionStop::AVService -> IO (Result (Response String))
+actionStop a = simpleHTTP $ Request (getFullAVURI a) POST soapactionhead body
+  where
+    body = TL.unpack $ renderText def soapbody
+    soapactionhead = [mkHeader (HdrCustom "SOAPACTION") "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"", mkHeader HdrContentLength (show $ length body)]
+    soapbody = soap () $
+          element (Name "Stop" (Just "urn:schemas-upnp-org:service:AVTransport:1") (Just "u")) $
+            element "InstanceID" (0::Int)
+
+
+emptyDIDLLite :: XML
+emptyDIDLLite = toXML ("<DIDL-Lite></DIDL-Lite>"::T.Text)
+
+
 actionSetAVTransportURI:: AVService -> URI -> IO (Result (Response String))
 actionSetAVTransportURI a ms = simpleHTTP $ Request (getFullAVURI a) POST soapactionhead body
   where
     body = TL.unpack $ renderText def soapbody
-    soapactionhead = [mkHeader (HdrCustom "SOAPACTION") "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"", mkHeader HdrContentLength (show $ length body)]
+    soapactionhead = [mkHeader (HdrCustom "SOAPACTION") "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\""
+                      ,mkHeader HdrContentLength (show $ length body)
+                     ]
     soapbody = soap () $
       element (Name "SetAVTransportURI" (Just "urn:schemas-upnp-org:service:AVTransport:1") (Just "u")) $ do
         element "InstanceID" (0::Int)
         element "CurrentURI" $ T.pack $ show ms
-        element "CurrentURIMetaData" ()
+        element "CurrentURIMetaData" emptyDIDLLite
 
 actionSetNextAVTransportURI:: AVService -> URI -> IO (Result (Response String))
 actionSetNextAVTransportURI a ms = simpleHTTP $ Request (getFullAVURI a) POST soapactionhead body
@@ -66,7 +84,7 @@ actionSetNextAVTransportURI a ms = simpleHTTP $ Request (getFullAVURI a) POST so
       element (Name "SetNextAVTransportURI" (Just "urn:schemas-upnp-org:service:AVTransport:1") (Just "u")) $ do
         element "InstanceID" (0::Int)
         element "NextURI" $ T.pack $ show ms
-        element "NextURIMetaData" ()
+        element "NextURIMetaData" emptyDIDLLite
 
 actionGetPositionInfo:: AVService -> IO (Result (Response String))
 actionGetPositionInfo a = simpleHTTP $ Request (getFullAVURI a) POST soapactionhead body
@@ -98,12 +116,15 @@ reltimeTicking trackstate tracklist as = handle
   (\(e::IOException) -> if show e == "connect: does not exist (Connection refused)"
       then do
         putStrLn "Connection refused, Retry"
-        threadDelay 1000000
+        threadDelay 5000000
         reltimeTicking trackstate tracklist as
       else throw e) $ do
       Right rsp <- actionGetPositionInfo as
       -- print $ rspBody rsp
-      [turi] <- runX $ readString [] (rspBody rsp) //> hasName "TrackURI" //> getText
+      turis <- runX $ readString [] (rspBody rsp) //> hasName "TrackURI" //> getText
+      let turi = case turis of
+                  [a] -> a
+                  _   -> error $ rspBody rsp
       [rtime] <- runX $ readString [] (rspBody rsp) //> hasName "RelTime" //> getText
       ts <- isEmptyMVar trackstate
       if ts then putMVar trackstate turi
