@@ -131,8 +131,7 @@ main = do
   when (length fps > 1) $ do
         a1 <- readChan tracklist
         _ <- actionSetAVTransportURI (dev,sev) a1
-        a2 <- readChan tracklist
-        _ <- actionSetNextAVTransportURI (dev,sev) a2
+        setNextAVTransportURI tracklist (dev,sev)
         _ <- actionPlay (dev,sev)
         return ()
 

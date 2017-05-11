@@ -5,10 +5,12 @@ module AVTransport
     (
       actionPlay,
       actionStop,
+      actionNext,
       actionSetAVTransportURI,
       actionSetNextAVTransportURI,
       actionGetPositionInfo,
       -- actionGetDeviceCapabilities,
+      setNextAVTransportURI,
       avTrasportStateLoop,
       AVService,
       getFullAVURI,
@@ -16,11 +18,13 @@ module AVTransport
     ) where
 
 import           Control.Arrow.ArrowTree  ((//>))
-import           Control.Concurrent       (Chan, readChan, threadDelay)
+import           Control.Concurrent       (Chan, readChan, threadDelay,
+                                           unGetChan)
 import           Control.Concurrent.Async
 import           Control.Concurrent.MVar  (MVar, isEmptyMVar, putMVar, readMVar,
                                            takeMVar)
 import           Control.Exception
+import           Control.Monad            (unless)
 import           Data.Default
 import qualified Data.Text                as T
 import qualified Data.Text.Lazy           as TL
@@ -57,6 +61,14 @@ actionStop a = simpleHTTP $ Request (getFullAVURI a) POST soapactionhead body
           element (Name "Stop" (Just "urn:schemas-upnp-org:service:AVTransport:1") (Just "u")) $
             element "InstanceID" (0::Int)
 
+actionNext::AVService -> IO (Result (Response String))
+actionNext a = simpleHTTP $ Request (getFullAVURI a) POST soapactionhead body
+  where
+    body = TL.unpack $ renderText def soapbody
+    soapactionhead = [mkHeader (HdrCustom "SOAPACTION") "\"urn:schemas-upnp-org:service:AVTransport:1#Next\"", mkHeader HdrContentLength (show $ length body)]
+    soapbody = soap () $
+          element (Name "Next" (Just "urn:schemas-upnp-org:service:AVTransport:1") (Just "u")) $
+            element "InstanceID" (0::Int)
 
 emptyDIDLLite :: XML
 emptyDIDLLite = toXML ("<DIDL-Lite></DIDL-Lite>"::T.Text)
@@ -120,7 +132,6 @@ reltimeTicking trackstate tracklist as = handle
         reltimeTicking trackstate tracklist as
       else throw e) $ do
       Right rsp <- actionGetPositionInfo as
-      -- print $ rspBody rsp
       turis <- runX $ readString [] (rspBody rsp) //> hasName "TrackURI" //> getText
       let turi = case turis of
                   [a] -> a
@@ -130,25 +141,31 @@ reltimeTicking trackstate tracklist as = handle
       if ts then putMVar trackstate turi
         else do
           a <- readMVar trackstate
-          if a == turi then return ()
-            else takeMVar trackstate >> async (trackChanged tracklist as) >> return ()
+          -- if a not equal turi we know that the track already change by the player
+          -- then we need to setNextAVTransportURI
+          unless (a == turi) $
+            takeMVar trackstate >> async (setNextAVTransportURI tracklist as) >> return ()
       print rtime
       threadDelay 1000000
       reltimeTicking trackstate tracklist as
-    where
-      trackChanged t a = do
-          nextURI <- readChan t  -- there will be a infinity waiting when Chan empty. will always leak one thread.
-          Right _ <- actionSetNextAVTransportURI a nextURI
-          putStrLn $ "set next to " ++ show nextURI
-          return ()
+
+setNextAVTransportURI :: Chan URI -> AVService -> IO ()
+setNextAVTransportURI t a = do
+    nextURI <- readChan t  -- there will be a infinity waiting when Chan empty. will always leak one thread.
+    unGetChan t nextURI
+    Right _ <- actionSetNextAVTransportURI a nextURI
+    putStrLn $ "Set next to " ++ show nextURI
+    return ()
+
 
 
 avTrasportStateLoop:: MVar String -> MVar String -> Chan URI -> AVService -> IO()
 avTrasportStateLoop playstate trackstate tracklist as = do
-  Left ps <- race (readMVar playstate) (threadDelay 30000000 >> throw ThreadTimeoutException)
-  putStrLn $ "avTrasportStateLoop Redispatch: " ++ ps
-  case ps of
-    "PLAYING" -> takeMVar playstate >> race_ (readMVar playstate) (reltimeTicking trackstate tracklist as) >> avTrasportStateLoop playstate trackstate tracklist as
-    "TRANSITIONING" -> takeMVar playstate >> avTrasportStateLoop playstate trackstate tracklist as
-    "PAUSED_PLAYBACK" -> takeMVar playstate >> avTrasportStateLoop playstate trackstate tracklist as
-    _ -> return ()
+    Left ps <- race (readMVar playstate) (threadDelay 30000000 >> throw ThreadTimeoutException)
+    putStrLn $ "avTrasportStateLoop Redispatch: " ++ ps
+    case ps of
+      "PLAYING" -> takeMVar playstate >> race_ (readMVar playstate) (reltimeTicking trackstate tracklist as) >> avTrasportStateLoop playstate trackstate tracklist as
+      "TRANSITIONING" -> takeMVar playstate >> avTrasportStateLoop playstate trackstate tracklist as
+      "PAUSED_PLAYBACK" -> takeMVar playstate >> avTrasportStateLoop playstate trackstate tracklist as
+      "MANUAL_NEXT" -> takeMVar playstate >> async (readChan tracklist >>= actionSetAVTransportURI as) >> avTrasportStateLoop playstate trackstate tracklist as
+      _  -> return ()

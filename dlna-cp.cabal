@@ -27,7 +27,8 @@ Executable controlpoint
     parsec, xml, HTTP, ssdp-upnp,
     network-uri, xml-conduit-writer, data-default, xml-conduit,
     warp, wai, http-types, process, unix, filepath, directory,
-    wai-app-static, async, network-info, uuid, split, time, hxt
+    wai-app-static, async, network-info, uuid, split, time, hxt,
+    wai-routes
 
   Other-modules: AVTransport,
         FileServer,
