@@ -2,9 +2,9 @@
 
 module Subscribe
     (
-      renewalRequest,
       subscribeEvent,
-      unSubscribeEvent
+      unSubscribeEvent,
+      renewalEvent
     ) where
 
 import           AVTransport
@@ -50,4 +50,9 @@ subscribeEvent (dev, sev) cburi = do
 unSubscribeEvent :: AVService -> (UUID, DiffTime) -> IO ()
 unSubscribeEvent a (uuid, _) = do
   _ <- simpleHTTP $ unSubRequest a uuid
+  return ()
+
+renewalEvent :: AVService -> UUID -> IO ()
+renewalEvent a uuid = do
+  Right _ <- simpleHTTP $ renewalRequest a uuid
   return ()
