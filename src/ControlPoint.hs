@@ -1,12 +1,13 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+import           Algorithms.NaturalSort  as NS (compare)
 import           AVTransport
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Exception        (handle)
-import           Control.Monad            (unless, when)
-import           Data.List                (sort)
+import           Control.Monad            (unless, when, forever)
+import           Data.List                (sortBy)
 import           Data.Maybe
 import           EventServer
 import           FileServer
@@ -19,7 +20,6 @@ import           Subscribe
 import           System.Console.GetOpt
 import           System.Directory
 import           System.Environment       (getArgs)
-
 
 parseHostURI::String -> URI
 parseHostURI a = fromMaybe
@@ -92,6 +92,9 @@ controlPointOpts = do
      (_,_,errs) -> ioError (userError (concat errs ++ usageInfo header options))
   where header = "Usage: ic [OPTION...] files..."
 
+nsort::[FilePath] -> [FilePath]
+nsort = sortBy NS.compare
+
 
 main :: IO ()
 main = do
@@ -113,12 +116,21 @@ main = do
   a_event <- async $ runEventServer playstate (getURIPort eventServerURI)
   a_dev <- async $ withSocketsDo getAVTransportOfFirstDevice
   (dev, sev) <- wait a_dev
-  ut <- subscribeEvent (dev, sev) eventServerURI
+  ut@(uu,_)<- subscribeEvent (dev, sev) eventServerURI
+
+  -- Every 60sec Renewal the Event Subscribe
+  _ <- forkIO $ forever $ do
+    threadDelay $ 60000000
+    print ("Renewal Event Subscribe"::String)
+    renewalEvent (dev,sev) uu
 
   dfe <- doesFileExist mediaPath
   fps <- if dfe
             then return [""]
-            else sort <$> listDirectory mediaPath
+            else nsort <$> listDirectory mediaPath
+
+  print ("Play List:"::String)
+  mapM_ print fps
 
   writeList2Chan tracklist $ map (toPlaypath hostURI) fps
 

@@ -28,7 +28,7 @@ Executable controlpoint
     network-uri, xml-conduit-writer, data-default, xml-conduit,
     warp, wai, http-types, process, unix, filepath, directory,
     wai-app-static, async, network-info, uuid, split, time, hxt,
-    wai-routes
+    wai-routes, natural-sort
 
   Other-modules: AVTransport,
         FileServer,

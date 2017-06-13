@@ -24,8 +24,9 @@ import           Control.Concurrent.Async
 import           Control.Concurrent.MVar  (MVar, isEmptyMVar, putMVar, readMVar,
                                            takeMVar)
 import           Control.Exception
-import           Control.Monad            (unless)
+import           Control.Monad            (when)
 import           Data.Default
+import           Data.Maybe               (fromMaybe)
 import qualified Data.Text                as T
 import qualified Data.Text.Lazy           as TL
 import           Data.Typeable            (Typeable)
@@ -132,21 +133,29 @@ reltimeTicking trackstate tracklist as = handle
         reltimeTicking trackstate tracklist as
       else throw e) $ do
       Right rsp <- actionGetPositionInfo as
-      turis <- runX $ readString [] (rspBody rsp) //> hasName "TrackURI" //> getText
-      let turi = case turis of
-                  [a] -> a
-                  _   -> error $ rspBody rsp
-      [rtime] <- runX $ readString [] (rspBody rsp) //> hasName "RelTime" //> getText
-      ts <- isEmptyMVar trackstate
-      if ts then putMVar trackstate turi
-        else do
-          a <- readMVar trackstate
-          -- if a not equal turi we know that the track already change by the player
-          -- then we need to setNextAVTransportURI
-          unless (a == turi) $
-            takeMVar trackstate >> async (setNextAVTransportURI tracklist as) >> return ()
-      print rtime
-      threadDelay 1000000
+      when (rspBody rsp /= "") $ do
+        turis <- runX $ readString [] (rspBody rsp) //> hasName "TrackURI" //> getText
+        [rtime] <- runX $ readString [] (rspBody rsp) //> hasName "RelTime" //> getText
+        let turi = case turis of
+                    [a] -> a
+                    _   -> ""
+        ts <- isEmptyMVar trackstate
+        if ts then putMVar trackstate turi
+          else do
+            a <- readMVar trackstate
+            -- if a not equal turi we know that the track already change by the player
+            -- then we need to drop the head of the tracklist and then setNextAVTransportURI
+            when (a /= turi && turi /= "") $
+              takeMVar trackstate >> do
+                nextURI <- readChan tracklist  -- there will be a infinity waiting when Chan empty.
+                unGetChan tracklist nextURI
+                if nextURI == fromMaybe (error "Can not parse the URI") (parseURI turi)
+                  then readChan tracklist >> async (setNextAVTransportURI tracklist as) >> return ()
+                  else async (setNextAVTransportURI tracklist as) >> return ()
+        print rtime
+        -- when (rtime == "00:00:00") $
+        --   print $ rspBody rsp
+      threadDelay 5000000
       reltimeTicking trackstate tracklist as
 
 setNextAVTransportURI :: Chan URI -> AVService -> IO ()
